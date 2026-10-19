@@ -1,0 +1,8 @@
+# API Key 等敏感配置
+data/
+node_modules/
+.ci/
+
+# 本机的 MCP 配置与全局技能（含本地路径）
+mcp.json
+skills/

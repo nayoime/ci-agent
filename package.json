@@ -1,0 +1,13 @@
+{
+  "name": "ci-agent",
+  "version": "0.1.0",
+  "description": "Ciallo Agent：多协议、子代理、MCP、网页界面",
+  "type": "module",
+  "private": true,
+  "bin": { "ci": "src/cli.js" },
+  "scripts": {
+    "cli": "node src/cli.js",
+    "test": "node --test test/*.test.js"
+  },
+  "engines": { "node": ">=22" }
+}

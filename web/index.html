@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1">
+	<title>Ciallo Agent</title>
+	<link rel="icon" type="image/svg+xml" href="/brand/favicon.svg">
+	<link rel="stylesheet" href="/vendor/katex/katex.min.css">
+	<link rel="stylesheet" href="/style.css">
+	<script src="/vendor/katex/katex.min.js"></script>
+	<script src="/theme.js"></script>
+</head>
+<body>
+	<div id="app">
+		<aside id="sidebar" aria-label="项目与会话">
+			<div class="brand">
+				<div class="logo" aria-hidden="true"></div>
+				<div class="brand-name">Ciallo Agent</div>
+			</div>
+
+			<button id="new-project" class="primary wide" type="button" aria-haspopup="dialog">＋ 新建 / 打开项目</button>
+
+			<div class="section-label">项目与会话</div>
+			<nav id="session-list" class="session-list" aria-label="项目与会话"></nav>
+
+			<button id="settings-btn" class="ghost wide" type="button">⚙ 设置</button>
+		</aside>
+
+		<main id="main">
+			<header class="topbar">
+				<button id="menu-btn" class="ghost icon mobile-only" type="button" aria-label="展开侧栏">☰</button>
+				<h1 id="session-title">Ciallo Agent</h1>
+				<div class="topbar-right">
+					<label class="sr-only" for="model-select">模型</label>
+					<select id="model-select" disabled></select>
+					<div id="ctx-meter" class="ctx-meter" role="meter" aria-label="上下文用量" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" title="上下文用量">
+						<div class="ctx-bar"><div class="ctx-fill"></div><div class="ctx-mark"></div></div>
+						<span class="ctx-text">0 / 0</span>
+					</div>
+					<button id="theme-btn" class="ghost icon" type="button" aria-label="切换主题" title="切换主题"></button>
+					<button id="compact-btn" class="ghost small" type="button" disabled title="手动压缩上下文">压缩</button>
+				</div>
+			</header>
+
+			<section id="messages" class="messages" aria-live="polite" aria-label="对话">
+				<div class="empty">
+					<div class="empty-logo" aria-hidden="true"></div>
+					<p>先在左侧选择一个项目目录，然后开始新会话。</p>
+				</div>
+			</section>
+
+			<form id="composer" class="composer" autocomplete="off">
+				<div class="composer-tools">
+					<div id="thinking-seg" class="seg" role="group" aria-label="思考强度">
+						<span class="seg-label">思考</span>
+					</div>
+				</div>
+				<div id="attachments" class="attachments"></div>
+				<div class="composer-box">
+					<label class="sr-only" for="input">输入消息</label>
+					<textarea id="input" rows="1" placeholder="描述你要做的事…（Enter 发送，Shift+Enter 换行，可粘贴图片）" disabled></textarea>
+					<button id="send-btn" class="primary send" type="submit" disabled aria-label="发送">发送</button>
+				</div>
+				<div class="composer-hint"><span id="status-text">就绪</span><span id="run-tokens" class="run-tokens" aria-live="off"></span></div>
+			</form>
+		</main>
+	</div>
+
+	<!-- 选择项目 -->
+	<dialog id="project-dialog" aria-labelledby="project-dialog-title">
+		<form method="dialog" class="dialog">
+			<header><h2 id="project-dialog-title">新建 / 打开项目</h2><button class="ghost icon" value="cancel" aria-label="关闭">✕</button></header>
+			<div class="dialog-body">
+				<div class="row">
+					<label class="sr-only" for="project-path">目录路径</label>
+					<input id="project-path" type="text" placeholder="输入绝对路径，如 D:\code\my-app">
+					<button id="project-open" class="primary" type="button">打开</button>
+				</div>
+				<h3>在浏览的目录下新建文件夹</h3>
+				<div class="row">
+					<label class="sr-only" for="new-folder-name">新文件夹名</label>
+					<input id="new-folder-name" type="text" placeholder="新项目文件夹名，如 my-app">
+					<button id="new-folder-create" type="button">新建并打开</button>
+				</div>
+				<h3>项目</h3>
+				<div id="recent-projects" class="list"></div>
+				<h3>浏览 <span id="browse-path" class="muted"></span></h3>
+				<div id="dir-browser" class="list browser"></div>
+			</div>
+		</form>
+	</dialog>
+
+	<!-- 项目提示词 -->
+	<dialog id="prompt-dialog" class="pp-dialog" aria-labelledby="prompt-dialog-title">
+		<form method="dialog" class="dialog">
+			<header>
+				<h2 id="prompt-dialog-title">项目设置</h2>
+				<button class="ghost icon" value="cancel" aria-label="关闭">✕</button>
+			</header>
+			<div class="dialog-body pp-body">
+				<section class="pp-sec" aria-labelledby="pp-h-prompt">
+					<div class="pp-sec-h">
+						<h3 id="pp-h-prompt">项目提示词</h3>
+						<button id="prompt-reset" class="ghost small" type="button">恢复默认</button>
+					</div>
+					<p class="pp-hint">拼在系统提示词最前面，下一轮请求生效。留空就是不拼。</p>
+					<textarea id="prompt-text" rows="7" spellcheck="false" aria-labelledby="pp-h-prompt"></textarea>
+				</section>
+
+				<section class="pp-sec" aria-labelledby="pp-h-cap">
+					<h3 id="pp-h-cap">能力</h3>
+					<div class="rows">
+						<div class="row-item pp-switch">
+							<div class="pp-sw-text">
+								<label for="prompt-tools">工具（agent 能力）</label>
+								<span class="pp-hint">关掉就是纯对话：不发工具，也不带工具、环境、技能等系统提示词</span>
+							</div>
+							<span class="switch"><input id="prompt-tools" type="checkbox" role="switch"><span aria-hidden="true"></span></span>
+						</div>
+						<div class="row-item pp-switch">
+							<div class="pp-sw-text">
+								<label for="prompt-memory">记忆库</label>
+								<span class="pp-hint">记忆写进系统提示词，模型通过 memory 工具自己增删改</span>
+							</div>
+							<span class="switch"><input id="prompt-memory" type="checkbox" role="switch"><span aria-hidden="true"></span></span>
+						</div>
+					</div>
+				</section>
+
+				<section class="pp-sec" id="pp-mem" aria-labelledby="pp-h-mem">
+					<div class="pp-sec-h">
+						<h3 id="pp-h-mem">记忆 <span id="memory-count" class="muted"></span></h3>
+						<span id="memory-off" class="pp-hint">记忆库未开启，这些记忆暂不生效</span>
+					</div>
+					<div class="rows">
+						<div id="memory-list"></div>
+						<div class="row-item pp-add">
+							<label class="sr-only" for="memory-new">新记忆</label>
+							<input id="memory-new" type="text" placeholder="手动加一条，如：用户的名字是小明（回车添加）">
+							<button id="memory-add" class="small" type="button">添加</button>
+						</div>
+					</div>
+				</section>
+			</div>
+			<footer class="pp-foot">
+				<button value="cancel">取消</button>
+				<button id="prompt-save" class="primary" type="button">保存</button>
+			</footer>
+		</form>
+	</dialog>
+
+	<!-- 设置 -->
+	<dialog id="settings-dialog" class="wide-dialog" aria-labelledby="settings-title">
+		<div class="dialog">
+			<header><h2 id="settings-title">设置</h2><button id="settings-close" class="ghost icon" type="button" aria-label="关闭">✕</button></header>
+			<div class="tabs" role="tablist">
+				<button role="tab" data-tab="models" aria-selected="true">模型与供应商</button>
+				<button role="tab" data-tab="skills">技能</button>
+				<button role="tab" data-tab="mcp">MCP</button>
+			</div>
+			<div id="settings-body" class="dialog-body"></div>
+		</div>
+	</dialog>
+
+	<div id="toast" class="toast" popover="manual" role="status" aria-live="polite"></div>
+	<script type="module" src="/app.js"></script>
+</body>
+</html>
