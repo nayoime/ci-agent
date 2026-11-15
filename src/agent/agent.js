@@ -434,6 +434,8 @@ export class Agent {
 					throw e;
 				}
 				if (!res) throw new Error("模型没有返回完整响应");
+				// 空回复不进上下文：存下来会让下一轮也跟着空（模型照着历史学），界面上也只是静默结束
+				if (!res.message.content.length) throw new Error(`模型返回了空回复（stop_reason：${res.rawStop || res.stopReason}，输出 ${res.usage?.output ?? 0} token），可空白发送重试`);
 				this.measureRead(res.usage);
 
 				const decoded = this.decodeCalls(res.message, req.codec);

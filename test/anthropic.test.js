@@ -17,10 +17,13 @@ test("Anthropic 请求映射跨协议工具 ID，保留原生 ID 且不修改历
 	};
 	try {
 		for (let i = 0; i < 2; i++) {
-			for await (const _ of streamAnthropic(
-				{ provider: { baseUrl: "https://example.test", apiKey: "test" }, model: "test", maxOutput: 100 },
-				{ messages, codec: { encode: (name, args) => ({ name, args }) } },
-			)) {}
+			// 假响应是空流：只关心请求体，同时验证空流按断流报错而不是当成正常结束
+			await assert.rejects(async () => {
+				for await (const _ of streamAnthropic(
+					{ provider: { baseUrl: "https://example.test", apiKey: "test" }, model: "test", maxOutput: 100 },
+					{ messages, codec: { encode: (name, args) => ({ name, args }) } },
+				)) {}
+			}, /响应流意外中断/);
 		}
 		const mapped = ids.map((_, i) => bodies[0].messages[i * 2].content[0].id);
 		assert.equal(new Set(mapped).size, ids.length);

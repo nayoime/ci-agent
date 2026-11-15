@@ -82,6 +82,7 @@ export async function* streamAnthropic(model, { system, messages, tools, codec, 
 
 	const blocks = []; // 按 index
 	let stopReason = "stop";
+	let stopped = false; // 收到 message_stop 才算完整响应
 	const usage = { input: 0, output: 0, cacheRead: 0 };
 
 	for await (const { data } of readSSE(res, signal)) {
@@ -128,11 +129,16 @@ export async function* streamAnthropic(model, { system, messages, tools, codec, 
 				if (ev.delta?.stop_reason) stopReason = ev.delta.stop_reason;
 				if (ev.usage?.output_tokens != null) usage.output = ev.usage.output_tokens;
 				break;
+			case "message_stop":
+				stopped = true;
+				break;
 			case "error":
 				throw new Error(`模型错误：${JSON.stringify(ev.error)}`);
 		}
 	}
 
+	// 中转站断流时可能什么都不发就结束，不能当成正常说完
+	if (!stopped) throw new Error(`响应流意外中断（未收到 message_stop，已收到 ${blocks.filter(Boolean).length} 个内容块）`);
 	const content = blocks.filter((b) => b && b.type !== "redacted" && !(b.type === "text" && !b.text));
 	const hasCalls = content.some((b) => b.type === "tool_call");
 	yield {
@@ -140,5 +146,6 @@ export async function* streamAnthropic(model, { system, messages, tools, codec, 
 		message: { role: "assistant", content },
 		usage,
 		stopReason: stopReason === "max_tokens" ? "length" : hasCalls ? "tool_calls" : "stop",
+		rawStop: stopReason,
 	};
 }
