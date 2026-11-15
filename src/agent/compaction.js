@@ -5,29 +5,42 @@ import { estimateMessage, estimateText } from "./tokens.js";
 const SUMMARY_SYSTEM = `你负责把编程代理的对话历史压缩成摘要，供代理继续工作。
 要求：
 - 用中文，条理清晰，只写事实，不要客套。
-- 必须保留：用户的目标和要求、已做的决定、改过的文件路径和改动要点、重要的命令结果和报错、未完成的事项。
+- 必须保留：用户的目标和要求、已做的决定、改过的文件路径和改动要点、读过哪些文件及从中得出的结论、重要的命令结果和报错、未完成的事项。
 - 文件路径、函数名、命令、报错信息保持原样。
-- 不需要保留：已经过时的尝试细节、大段文件内容（只记位置和要点）。
+- 不需要保留：已经过时的尝试细节、文件内容本身（压缩后代理需要时会重新读取）。
 按以下结构输出：
 ## 目标
 ## 已完成
 ## 关键信息（文件、决定、发现）
 ## 待办`;
 
-/** 消息序列化为纯文本，用于摘要 */
-function serialize(m, maxTool = 1500) {
+/** 头尾保留、中间省略（只留开头会让模型误判输出的结尾） */
+function clipMiddle(s, max) {
+	return s.length > max ? `${s.slice(0, max * 0.6)}\n…（中间省略 ${s.length - max} 字）…\n${s.slice(-max * 0.4)}` : s;
+}
+
+/**
+ * 工具结果按类型处理：读文件、列目录的内容可以重新获取，摘要不该记，只留一行记录；
+ * 命令、搜索等结果无法免费重现，压短保留；去掉附给模型的上下文状况
+ */
+function serializeTool(m, args = {}, maxTool) {
+	const c = m.content.replace(/\n\n〔上下文 [^〕]*〕$/, "");
+	const head = `【工具结果 ${m.name}${m.isError ? " 出错" : ""}】`;
+	if (!m.isError && m.name === "read") {
+		const range = args.offset ? `，从第 ${args.offset} 行起` : "";
+		return `${head}已读取 ${args.path ?? ""}${range}（约 ${estimateText(c)} token，内容略）`;
+	}
+	if (!m.isError && (m.name === "ls" || m.name === "glob")) return `${head}已列出 ${args.pattern ?? args.path ?? "."}（结果略）`;
+	return `${head}\n${clipMiddle(c, maxTool)}`;
+}
+
+/** 消息序列化为纯文本，用于摘要；calls：调用 ID → 参数 */
+function serialize(m, calls, maxTool = 500) {
 	if (m.role === "user") {
 		const t = typeof m.content === "string" ? m.content : m.content.map((b) => b.text || "[图片]").join("\n");
 		return `【用户】\n${t}`;
 	}
-	if (m.role === "tool") {
-		// 保留头尾，中间省略（只留开头会让模型误判文件/输出的结尾）
-		const c =
-			m.content.length > maxTool
-				? `${m.content.slice(0, maxTool * 0.6)}\n…（中间省略 ${m.content.length - maxTool} 字）…\n${m.content.slice(-maxTool * 0.4)}`
-				: m.content;
-		return `【工具结果 ${m.name}${m.isError ? " 出错" : ""}】\n${c}`;
-	}
+	if (m.role === "tool") return serializeTool(m, calls.get(m.id), maxTool);
 	const parts = [];
 	for (const b of m.content) {
 		if (b.type === "text" && b.text) parts.push(b.text);
@@ -78,11 +91,14 @@ async function summarize(model, text, { previous, focus, signal }) {
  * 压缩消息列表，返回新列表（不修改原数组）。
  * 历史过长时分块滚动摘要，保证每次摘要请求不超过模型上下文。
  */
-export async function compactMessages(model, messages, { focus, signal } = {}) {
-	const cut = findCut(messages, model.keepRecent);
+export async function compactMessages(model, messages, { focus, signal, summarizer, scale = 1 } = {}) {
+	// scale：真实 token / 估算值。估算偏低时（代码、JSON 较多）按比例少留一些，否则压缩后马上又超线
+	const cut = findCut(messages, model.keepRecent / scale);
 	if (cut <= 0) return null;
 	const head = messages.slice(0, cut);
 	const tail = messages.slice(cut);
+	// 切分点按主模型算；摘要请求可以交给单独配置的压缩模型
+	model = summarizer || model;
 
 	const budget = Math.max(2000, model.contextWindow - Math.min(3000, model.maxOutput) - 2500);
 	let summary = "";
@@ -94,12 +110,14 @@ export async function compactMessages(model, messages, { focus, signal } = {}) {
 		chunk = [];
 		chunkTokens = 0;
 	};
+	const calls = new Map();
+	for (const m of head) if (m.role === "assistant") for (const b of m.content) if (b.type === "tool_call") calls.set(b.id, b.args);
 	for (const m of head) {
 		if (m.summary) {
 			summary = typeof m.content === "string" ? m.content.replace(/^<历史摘要>\n?|\n?<\/历史摘要>[\s\S]*$/g, "") : "";
 			continue;
 		}
-		const s = serialize(m);
+		const s = serialize(m, calls);
 		const t = estimateText(s);
 		if (chunkTokens + t + estimateText(summary) > budget) await flush();
 		chunk.push(t > budget ? s.slice(0, budget * 2) : s);

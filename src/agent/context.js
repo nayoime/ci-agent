@@ -27,9 +27,10 @@ export function loadProjectPrompt(cwd) {
 /**
  * 项目开关与记忆库：<项目>/.ci/project.json
  * tools：是否提供工具（关掉就是纯对话），默认开
+ * subagent：是否把子代理工具发给模型，默认开
  * memory：是否启用记忆库，默认关；memories：逐条记忆（字符串）
  */
-const PROJECT_DEFAULTS = { tools: true, memory: false, memories: [] };
+const PROJECT_DEFAULTS = { tools: true, subagent: true, memory: false, memories: [] };
 export const projectSettingsFile = (cwd) => path.join(projectDir(cwd), "project.json");
 
 export function loadProjectSettings(cwd) {
@@ -37,6 +38,7 @@ export function loadProjectSettings(cwd) {
 		const s = JSON.parse(fs.readFileSync(projectSettingsFile(cwd), "utf8"));
 		return {
 			tools: s.tools !== false,
+			subagent: s.subagent !== false,
 			memory: s.memory === true,
 			memories: Array.isArray(s.memories) ? s.memories.map(String).filter((x) => x.trim()) : [],
 		};
@@ -49,6 +51,7 @@ export function saveProjectSettings(cwd, patch) {
 	ensureProject(cwd);
 	const next = { ...loadProjectSettings(cwd), ...patch };
 	next.tools = next.tools !== false;
+	next.subagent = next.subagent !== false;
 	next.memory = next.memory === true;
 	next.memories = (next.memories || []).map((x) => String(x).trim()).filter(Boolean);
 	fs.writeFileSync(projectSettingsFile(cwd), JSON.stringify(next, null, "\t"));

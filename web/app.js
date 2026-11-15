@@ -485,9 +485,11 @@ function assistantEl(msg, results) {
 			attachCodeCopy(t);
 			el.append(t);
 		} else if (b.type === "tool_call") {
+			if (b.mergedInto) continue; // 已合并到同轮第一个子代理调用，泳道显示在那张卡片里
 			const card = toolCard(b);
 			const r = results?.get(b.id);
-			if (r) card.finish(r.content, r.isError);
+			// 去掉附给模型的上下文状况（同 agent.js CONTEXT_NOTE_RE），与实时显示一致
+			if (r) card.finish(r.content.replace(/\n\n〔上下文 [^〕]*〕$/, ""), r.isError);
 			el.append(card.el);
 			if (r?.details?.lanes) replayLanes(card, r.details.lanes);
 		}
@@ -937,6 +939,9 @@ function enableComposer(on) {
 	$("#input").disabled = !on;
 	$("#send-btn").disabled = !on;
 	$("#model-select").disabled = !on;
+	$("#compact-model-select").disabled = !on;
+	$("#subagent-model-select").disabled = !on;
+	$("#subagent-toggle").disabled = !on;
 	$("#compact-btn").disabled = !on || S.running;
 }
 
@@ -946,6 +951,9 @@ function showSession(cwd, v) {
 	localStorage.setItem("ci.cwd", cwd);
 	localStorage.setItem("ci.session." + cwd, v.id);
 	$("#model-select").value = v.model;
+	$("#compact-model-select").value = v.compactModel || "";
+	$("#subagent-model-select").value = v.subagentModel || "";
+	if (!samePath(cwd, S.subagentCwd)) loadSubagentToggle(cwd);
 	setThinkingUI(v.thinking || "off");
 	resetRun();
 	renderHistory(v.messages);
@@ -974,7 +982,7 @@ async function openSession(cwd, id) {
 }
 
 async function newSession(cwd) {
-	const v = await api("/api/sessions", { method: "POST", body: { cwd, model: $("#model-select").value || undefined, thinking: localStorage.getItem("ci.thinking") || "off" } });
+	const v = await api("/api/sessions", { method: "POST", body: { cwd, model: $("#model-select").value || undefined, compactModel: $("#compact-model-select").value || undefined, subagentModel: $("#subagent-model-select").value || undefined, thinking: localStorage.getItem("ci.thinking") || "off" } });
 	showSession(cwd, v);
 	loadTree();
 }
@@ -998,6 +1006,14 @@ async function refreshState() {
 		...S.state.models.map((m) => h("option", { value: m.id }, `${m.name}  · ${{ anthropic: "Anthropic", gemini: "Gemini" }[m.protocol] || "OpenAI"}`)),
 	);
 	sel.value = S.state.models.some((m) => m.id === cur) ? cur : S.state.defaultModel;
+	const csel = $("#compact-model-select");
+	const ccur = csel.value;
+	csel.replaceChildren(h("option", { value: "" }, "压缩：同主模型"), ...S.state.models.map((m) => h("option", { value: m.id }, `压缩：${m.name}`)));
+	csel.value = S.state.models.some((m) => m.id === ccur) ? ccur : "";
+	const ssel = $("#subagent-model-select");
+	const scur = ssel.value;
+	ssel.replaceChildren(h("option", { value: "" }, "子代理：同主模型"), ...S.state.models.map((m) => h("option", { value: m.id }, `子代理：${m.name}`)));
+	ssel.value = S.state.models.some((m) => m.id === scur) ? scur : "";
 	setThinkingUI();
 }
 
@@ -1096,6 +1112,32 @@ $("#model-select").onchange = async (e) => {
 		updateMeter(v.contextTokens, v.contextWindow, v.compactAt);
 		toast(`已切换到 ${curModel()?.name}`);
 		setThinkingUI();
+	}
+};
+$("#compact-model-select").onchange = async (e) => {
+	if (!S.sessionId) return;
+	const r = await api(`/api/sessions/${S.sessionId}/compactmodel` + q({ cwd: S.cwd }), { method: "PUT", body: { model: e.target.value } }).catch((err) => toast(err.message, true));
+	if (r) toast(r.compactModel ? `压缩改用 ${S.state.models.find((m) => m.id === r.compactModel)?.name}` : "压缩使用主模型");
+};
+$("#subagent-model-select").onchange = async (e) => {
+	if (!S.sessionId) return;
+	const r = await api(`/api/sessions/${S.sessionId}/subagentmodel` + q({ cwd: S.cwd }), { method: "PUT", body: { model: e.target.value } }).catch((err) => toast(err.message, true));
+	if (r) toast(r.subagentModel ? `子代理改用 ${S.state.models.find((m) => m.id === r.subagentModel)?.name}` : "子代理使用主模型");
+};
+// 子代理开关（项目级，存 .ci/project.json）：关掉后子代理工具不发给模型
+async function loadSubagentToggle(cwd) {
+	S.subagentCwd = cwd;
+	const r = await api("/api/project-prompt" + q({ cwd })).catch(() => null);
+	if (r && samePath(cwd, S.cwd)) $("#subagent-toggle").checked = r.subagent !== false;
+}
+$("#subagent-toggle").onchange = async (e) => {
+	const on = e.target.checked;
+	try {
+		await api("/api/project-prompt" + q({ cwd: S.cwd }), { method: "PUT", body: { subagent: on } });
+		toast(on ? "子代理已开启" : "子代理已关闭（下一轮生效）");
+	} catch (err) {
+		e.target.checked = !on;
+		toast(err.message, true);
 	}
 };
 // 思考档位（输入框上方）：按当前模型支持的档位显示；会话级，运行中修改下一轮生效

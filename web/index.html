@@ -33,6 +33,10 @@
 				<div class="topbar-right">
 					<label class="sr-only" for="model-select">模型</label>
 					<select id="model-select" disabled></select>
+					<label class="sr-only" for="compact-model-select">压缩模型</label>
+					<select id="compact-model-select" disabled title="上下文压缩（摘要）用的模型"></select>
+					<label class="sr-only" for="subagent-model-select">子代理模型</label>
+					<select id="subagent-model-select" disabled title="子代理用的模型（压缩阈值按该模型配置）"></select>
 					<div id="ctx-meter" class="ctx-meter" role="meter" aria-label="上下文用量" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" title="上下文用量">
 						<div class="ctx-bar"><div class="ctx-fill"></div><div class="ctx-mark"></div></div>
 						<span class="ctx-text">0 / 0</span>
@@ -54,6 +58,7 @@
 					<div id="thinking-seg" class="seg" role="group" aria-label="思考强度">
 						<span class="seg-label">思考</span>
 					</div>
+					<label class="sub-toggle" title="关掉后不把子代理工具发给模型（项目级）"><input id="subagent-toggle" type="checkbox" disabled> 子代理</label>
 				</div>
 				<div id="attachments" class="attachments"></div>
 				<div class="composer-box">
