@@ -124,6 +124,8 @@ body.busy .logo::after { animation: pulse 1.4s ease-in-out infinite; }
 .topbar h1 { font-size: 14px; font-weight: 600; margin: 0; flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .topbar-right { display: flex; align-items: center; gap: 8px; }
 #model-select { max-width: 260px; font: 12.5px var(--mono); padding: 5px 8px; }
+#compact-model-select, #subagent-model-select { max-width: 190px; font: 12px var(--mono); padding: 5px 8px; color: var(--muted); }
+.sub-toggle { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: var(--muted); cursor: pointer; user-select: none; }
 #theme-btn { font-size: 15px; line-height: 1; width: 32px; padding: 6px 0; }
 .ctx-meter { display: flex; align-items: center; gap: 8px; font: 11.5px var(--mono); color: var(--muted); }
 /* 分段式上下文条 */
@@ -301,6 +303,7 @@ table.map td code { font: 12px var(--mono); }
 	.mobile-only { display: inline-block; }
 	.ctx-bar { width: 60px; }
 	#model-select { max-width: 140px; }
+	#compact-model-select, #subagent-model-select { max-width: 110px; }
 	.lanes { grid-template-columns: 1fr; }
 }
 @media (prefers-reduced-motion: reduce) {

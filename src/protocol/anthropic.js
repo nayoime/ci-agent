@@ -1,8 +1,13 @@
 // Anthropic Messages 适配器
+import { createHash } from "node:crypto";
 import { readSSE, httpError } from "./sse.js";
 
 function toWire(messages, codec) {
 	const out = [];
+	// 跨协议历史的调用 ID 也要转换；调用和结果使用相同映射，不改持久化消息。
+	const toolId = (id) => typeof id === "string" && id.startsWith("toolu_")
+		? id
+		: `toolu_${createHash("sha256").update(String(id)).digest("hex")}`;
 	const push = (role, blocks) => {
 		const last = out[out.length - 1];
 		if (last && last.role === role) last.content.push(...blocks); // 合并同角色相邻消息
@@ -27,13 +32,22 @@ function toWire(messages, codec) {
 				else if (b.type === "text" && b.text) blocks.push({ type: "text", text: b.text });
 				else if (b.type === "tool_call") {
 					const w = codec.encode(b.name, b.args);
-					blocks.push({ type: "tool_use", id: b.id, name: w.name, input: w.args });
+					blocks.push({ type: "tool_use", id: toolId(b.id), name: w.name, input: w.args });
 				}
 			}
 			if (blocks.length) push("assistant", blocks);
 		} else if (m.role === "tool") {
-			push("user", [{ type: "tool_result", tool_use_id: m.id, content: m.content, is_error: !!m.isError }]);
+			push("user", [{ type: "tool_result", tool_use_id: toolId(m.id), content: m.content, is_error: !!m.isError }]);
 		}
+	}
+	// 历史缓存断点（system、tools 各占一个，上限 4 个）：最后一条用户消息让下一轮复用；
+	// 上一条用户消息正是上一轮请求的结尾，打上后精确命中上一轮写入的缓存（一轮工具结果很多时也不会超出回溯范围）
+	let marks = 0;
+	for (let i = out.length - 1; i >= 0 && marks < 2; i--) {
+		if (out[i].role !== "user") continue;
+		const blocks = out[i].content;
+		blocks[blocks.length - 1] = { ...blocks[blocks.length - 1], cache_control: { type: "ephemeral" } };
+		marks++;
 	}
 	return out;
 }

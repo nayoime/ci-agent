@@ -1,11 +1,12 @@
 import fs from "node:fs/promises";
-import { resolvePath } from "./util.js";
+import path from "node:path";
+import { resolvePath, tokenLabel } from "./util.js";
 
 export default {
 	name: "ls",
 	label: "列出目录",
 	readOnly: true,
-	description: "列出目录内容。",
+	description: "列出目录内容。文件后标注完整读取约需的 token（≈ 为估算，无 ≈ 为实测）。",
 	parameters: {
 		type: "object",
 		properties: {
@@ -20,13 +21,19 @@ export default {
 		const entries = await fs.readdir(dir, { withFileTypes: true }).catch((e) => {
 			throw new Error(e.code === "ENOTDIR" ? `不是目录：${dir}` : `目录不存在：${dir}`);
 		});
-		const names = entries
+		const list = entries
 			.filter((e) => e.name !== ".ci") // 代理自己的数据目录，不属于项目
-			.map((e) => (e.isDirectory() ? e.name + "/" : e.name))
-			.sort((a, b) => a.localeCompare(b, "en", { sensitivity: "base" }));
-		if (!names.length) return "（空目录）";
-		const shown = names.slice(0, limit);
-		if (names.length > limit) shown.push(`…（共 ${names.length} 项，只显示前 ${limit} 项）`);
+			.sort((a, b) => a.name.localeCompare(b.name, "en", { sensitivity: "base" }));
+		if (!list.length) return "（空目录）";
+		const shown = await Promise.all(
+			list.slice(0, limit).map(async (e) => {
+				if (e.isDirectory()) return e.name + "/";
+				const full = path.join(dir, e.name);
+				const st = await fs.stat(full).catch(() => null);
+				return st?.isFile() ? `${e.name}  ${tokenLabel(ctx.cwd, full, st.size)}` : e.name;
+			}),
+		);
+		if (list.length > limit) shown.push(`…（共 ${list.length} 项，只显示前 ${limit} 项）`);
 		return shown.join("\n");
 	},
 };

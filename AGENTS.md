@@ -16,8 +16,9 @@ src/
     session.js         会话持久化 <项目>/.ci/sessions/<id>.jsonl（追加写，reset 记录整体替换）
     context.js         .ci 目录、AGENTS.md/CLAUDE.md、项目提示词 prompt.md、项目开关 project.json
     prompt.js          系统提示词（中文）；纯对话模式 buildChatPrompt
-    compaction.js      上下文压缩
+    compaction.js      上下文压缩（读文件/列目录结果不交给摘要模型）
     tokens.js          token 估算
+    filetokens.js      文件读取 token 实测记录 <项目>/.ci/tokens.json
   protocol/
     index.js           按 provider.protocol 分发；思考档位映射（THINK_PRESETS / OFFICIAL_THINK）
     openai.js anthropic.js gemini.js   三种协议适配器，统一事件流

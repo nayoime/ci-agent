@@ -23,7 +23,7 @@ export default {
 		},
 		required: ["tasks"],
 	},
-	// Claude Code 的 Task 工具一次一个任务；同一轮多个 Task 调用会被并行执行
+	// Claude Code 的 Task 工具一次一个任务；同一轮多个 Task 调用由代理合并成一次多任务调用（mergeSubagentCalls）
 	claude: {
 		name: "Task",
 		parameters: {

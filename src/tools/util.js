@@ -2,6 +2,7 @@
 import path from "node:path";
 import fs from "node:fs";
 import { spawnSync } from "node:child_process";
+import { fileTokens, fmtTokens } from "../agent/filetokens.js";
 
 export const IS_WIN = process.platform === "win32";
 export const MAX_LINES = 2000;
@@ -36,6 +37,12 @@ export function truncate(text, { mode = "head", maxLines = MAX_LINES, maxBytes =
 		note = `（输出超过 ${maxBytes / 1024}KB，已截断）`;
 	}
 	return note ? (mode === "tail" ? `${note}\n${out}` : `${out}\n${note}`) : out;
+}
+
+/** 文件完整读取的 token 标注：实测过的不带 ≈ */
+export function tokenLabel(cwd, file, size) {
+	const { tokens, measured } = fileTokens(cwd, file, size);
+	return `${measured ? "" : "≈"}${fmtTokens(tokens)}`;
 }
 
 export function isBinary(buf) {

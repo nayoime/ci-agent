@@ -103,3 +103,66 @@ test("思考档位映射与就近落档", async () => {
 	assert.deepEqual(thinkingParams(custom, "low", { extraBody: { foo: { x: 2 } } }).extraBody, { foo: { x: 2, bar: 1 } });
 	assert.deepEqual(thinkingParams(custom, "off").extraBody, {});
 });
+
+test("读取警戒线：跨线拦下、force 放行、并行累加；实测写入 .ci/tokens.json 后 ls 显示实测值", async () => {
+	const { Agent } = await import("../src/agent/agent.js");
+	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ci-guard-"));
+	fs.writeFileSync(path.join(dir, "big.txt"), "abcdefgh\n".repeat(400)); // 约 3600 字节
+	const agent = new Agent({ model: { contextWindow: 10000, compactAt: 5000, keepRecent: 2500, maxParallel: 1 }, cwd: dir, registry: {}, messages: [] });
+	agent.lastPromptTokens = 2500; // 警戒线 4000
+	agent.countedUpTo = 0;
+	const c = { cwd: dir, settings: {}, agent, callId: "r1" };
+	agent.batchReserved = 0;
+	agent.batchReads = new Map();
+	const blocked = await T.read.run({ path: "big.txt" }, c);
+	assert.match(blocked, /^未读取 .*警戒线/);
+	assert.match(blocked, /force: true/);
+	assert.equal(agent.batchReads.size, 0);
+	assert.match(await T.read.run({ path: "big.txt", force: true }, c), /本段约 .* token/);
+	assert.equal(agent.batchReads.get("r1").bytes, 3601);
+	// 放行的读取计入本批：再读一次已在线上，不再拦
+	assert.match(await T.read.run({ path: "big.txt" }, { ...c, callId: "r2" }), /\t abcdefgh|abcdefgh/);
+
+	// 实测：输入差值 = 助手消息 + 读取结果
+	agent.pendingMeasure = { file: path.join(dir, "big.txt"), bytes: 3600, prevInput: 1000, aEst: 20, estRead: 1500, estAll: 1500 };
+	agent.measureRead({ input: 1000 + 20 + 1800 });
+	const stat = JSON.parse(fs.readFileSync(path.join(dir, ".ci", "tokens.json"), "utf8"))["big.txt"];
+	assert.equal(stat.scale, 1.2);
+	assert.equal(stat.perByte, 0.5);
+	const ls = await T.ls.run({}, { cwd: dir });
+	assert.match(ls, /big\.txt  1\.8k/); // 3600 × 0.5，实测不带 ≈
+	assert.doesNotMatch(ls, /\.ci/);
+	fs.writeFileSync(path.join(dir, "new.txt"), "x".repeat(1000));
+	assert.match(await T.glob.run({ pattern: "new.txt" }, { cwd: dir }), /new\.txt  ≈360/);
+});
+
+test("压缩：读文件结果只留记录，命令结果压短，去掉上下文状况", async () => {
+	const { compactMessages } = await import("../src/agent/compaction.js");
+	const big = "SECRET_FILE_BODY\n".repeat(500);
+	const messages = [
+		{ role: "user", content: "改 bug" },
+		{ role: "assistant", content: [{ type: "tool_call", id: "a", name: "read", args: { path: "src/x.js" } }, { type: "tool_call", id: "b", name: "bash", args: { command: "npm test" } }] },
+		{ role: "tool", id: "a", name: "read", content: big },
+		{ role: "tool", id: "b", name: "bash", content: "FAIL_HEAD\n" + "y".repeat(3000) + "\nFAIL_TAIL\n\n〔上下文 ≈1k / 10k，再增 ≈5k 自动压缩，压缩后只保留最近 ≈2k 原文〕" },
+		{ role: "assistant", content: [{ type: "text", text: "好" }] },
+		{ role: "user", content: "继续" },
+	];
+	let sent = "";
+	const oldFetch = globalThis.fetch;
+	globalThis.fetch = async (_u, o) => {
+		sent = JSON.parse(o.body).messages.at(-1).content;
+		const ev = (d) => `data: ${JSON.stringify(d)}\n\n`;
+		return new Response(ev({ choices: [{ delta: { content: "摘要" } }] }) + ev({ choices: [{ delta: {}, finish_reason: "stop" }], usage: { prompt_tokens: 1, completion_tokens: 1 } }) + "data: [DONE]\n\n", { status: 200 });
+	};
+	try {
+		const model = { contextWindow: 100000, maxOutput: 1000, keepRecent: 1, provider: { protocol: "openai", baseUrl: "http://x.test", apiKey: "k" }, model: "m" };
+		const r = await compactMessages(model, messages, {});
+		assert.equal(r.summary, "摘要");
+	} finally {
+		globalThis.fetch = oldFetch;
+	}
+	assert.match(sent, /已读取 src\/x\.js（约 \d+ token，内容略）/);
+	assert.doesNotMatch(sent, /SECRET_FILE_BODY/);
+	assert.match(sent, /FAIL_HEAD[\s\S]*中间省略[\s\S]*FAIL_TAIL/);
+	assert.doesNotMatch(sent, /〔上下文/);
+});

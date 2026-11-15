@@ -79,11 +79,22 @@ function checkCwd(cwd) {
 	return path.resolve(cwd);
 }
 
-function makeAgent(cwd, session, modelId, messages = [], thinking, statsFrom = 0) {
+/** 压缩模型、子代理模型：空或已删除的模型返回 null（用主模型） */
+function resolveCompact(id) {
+	try {
+		return id && config.models[id] ? resolveModel(config, id) : null;
+	} catch {
+		return null;
+	}
+}
+
+function makeAgent(cwd, session, modelId, messages = [], thinking, statsFrom = 0, compactId = "", subagentId = "") {
 	const sid = session.id;
 	return new Agent({
 		thinking,
 		model: resolveModel(config, modelId),
+		compactModel: resolveCompact(compactId),
+		subagentModel: resolveCompact(subagentId),
 		cwd,
 		registry,
 		settings: config.settings,
@@ -102,7 +113,7 @@ function getLive(cwd, id) {
 	const { messages, meta, statsFrom } = session.load();
 	let modelId = meta.model;
 	if (!config.models[modelId]) modelId = config.defaultModel;
-	const entry = { agent: makeAgent(cwd, session, modelId, messages, meta.thinking, statsFrom), session, cwd };
+	const entry = { agent: makeAgent(cwd, session, modelId, messages, meta.thinking, statsFrom, meta.compactModel, meta.subagentModel), session, cwd };
 	live.set(key(cwd, id), entry);
 	return entry;
 }
@@ -122,6 +133,8 @@ function sessionView({ agent, session }) {
 	return {
 		id: session.id,
 		model: agent.model.id,
+		compactModel: agent.compactModel?.id || "",
+		subagentModel: agent.subagentModel?.id || "",
 		running: agent.running,
 		thinking: agent.thinking,
 		messages: agent.messages,
@@ -153,6 +166,8 @@ function applyConfig(next) {
 		try {
 			agent.model = resolveModel(config, config.models[agent.model.id] ? agent.model.id : config.defaultModel);
 			agent.settings = config.settings;
+			agent.compactModel = resolveCompact(agent.compactModel?.id);
+			agent.subagentModel = resolveCompact(agent.subagentModel?.id);
 		} catch {}
 	}
 }
@@ -318,8 +333,10 @@ async function api(req, res, url) {
 			const session = new Session(cwd);
 			const modelId = config.models[b.model] ? b.model : config.defaultModel;
 			const thinking = THINKING_LEVELS.includes(b.thinking) ? b.thinking : "off";
-			session.append({ type: "meta", meta: { model: modelId, cwd, thinking } });
-			const entry = { agent: makeAgent(cwd, session, modelId, [], thinking), session, cwd };
+			const compactId = config.models[b.compactModel] ? b.compactModel : "";
+			const subagentId = config.models[b.subagentModel] ? b.subagentModel : "";
+			session.append({ type: "meta", meta: { model: modelId, cwd, thinking, compactModel: compactId, subagentModel: subagentId } });
+			const entry = { agent: makeAgent(cwd, session, modelId, [], thinking, 0, compactId, subagentId), session, cwd };
 			live.set(key(cwd, session.id), entry);
 			return send(res, 200, sessionView(entry));
 		}
@@ -391,6 +408,20 @@ async function api(req, res, url) {
 			agent.countedUpTo = 0;
 			session.append({ type: "meta", meta: { model } });
 			return send(res, 200, sessionView(entry));
+		}
+		if (action === "compactmodel" && m === "PUT") {
+			const id = String((await readBody(req)).model || "");
+			if (id && !config.models[id]) throw httpErr(400, `未知模型：${id}`);
+			agent.compactModel = resolveCompact(id);
+			session.append({ type: "meta", meta: { compactModel: id } });
+			return send(res, 200, { ok: true, compactModel: id });
+		}
+		if (action === "subagentmodel" && m === "PUT") {
+			const id = String((await readBody(req)).model || "");
+			if (id && !config.models[id]) throw httpErr(400, `未知模型：${id}`);
+			agent.subagentModel = resolveCompact(id);
+			session.append({ type: "meta", meta: { subagentModel: id } });
+			return send(res, 200, { ok: true, subagentModel: id });
 		}
 		if (action === "thinking" && m === "PUT") {
 			const { thinking } = await readBody(req);
@@ -472,6 +503,7 @@ async function api(req, res, url) {
 			if (typeof b.text === "string") fs.writeFileSync(projectPromptFile(cwd), b.text);
 			const patch = {};
 			if (typeof b.tools === "boolean") patch.tools = b.tools;
+			if (typeof b.subagent === "boolean") patch.subagent = b.subagent;
 			if (typeof b.memory === "boolean") patch.memory = b.memory;
 			if (Array.isArray(b.memories)) patch.memories = b.memories;
 			return send(res, 200, { ok: true, ...saveProjectSettings(cwd, patch) });
