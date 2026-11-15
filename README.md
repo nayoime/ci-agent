@@ -57,6 +57,8 @@ node src/server.js --port 8799 --no-open   # 指定端口，不自动打开浏�
    - 工具风格：原生，或 Claude Code 风格（工具名和参数按 Claude Code 的叫法发给模型）
    - 思考档位：OpenAI、Claude、Google、DeepSeek 官方接口直接选；其他接口选"自定义"，勾选支持的档位并填写每档的请求参数（JSON）
 
+上游卡住（连接不断但长时间不发数据）时，默认 300 秒后断开并报错，可空白发送重试；思考时间很长、不流式输出思考的模型可以在 `data/config.json` 里给该模型设 `idleTimeout`（秒，0 为关闭）。
+
 API Key 以明文存在 `data/config.json`，该目录已被 gitignore。
 
 ## 技能

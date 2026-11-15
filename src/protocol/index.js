@@ -10,9 +10,35 @@ import { streamGemini } from "./gemini.js";
  *   { type: "done", message, usage, stopReason }
  * message.content 中工具调用为 { type:"tool_call", id, rawName, rawArgs }，由上层解码。
  */
-export function streamModel(model, req) {
+/** 空闲超时（秒）：连接开着却长时间不发任何数据（上游卡住）时断开。模型配置 idleTimeout 可改，0 关闭 */
+export const DEFAULT_IDLE_TIMEOUT = 300;
+
+export async function* streamModel(model, req) {
 	if (req.thinking) req = { ...req, ...thinkingParams(model, req.thinking, req) };
 	const proto = model.provider.protocol;
+	const secs = model.idleTimeout ?? DEFAULT_IDLE_TIMEOUT;
+	if (!secs) return yield* dispatch(proto, model, req);
+	// 看门狗：等响应头、每收到一块数据（readSSE 调 touch）都重新计时
+	const wd = new AbortController();
+	let timer;
+	const touch = () => {
+		clearTimeout(timer);
+		timer = setTimeout(() => wd.abort(), secs * 1000);
+	};
+	const signal = AbortSignal.any([req.signal, wd.signal].filter(Boolean));
+	signal.touch = touch;
+	touch();
+	try {
+		yield* dispatch(proto, model, { ...req, signal });
+	} catch (e) {
+		if (wd.signal.aborted && !req.signal?.aborted) throw new Error(`上游 ${secs} 秒没有返回任何数据，已断开（可能是服务端卡住）。可空白发送重试`);
+		throw e;
+	} finally {
+		clearTimeout(timer);
+	}
+}
+
+function dispatch(proto, model, req) {
 	return proto === "anthropic" ? streamAnthropic(model, req) : proto === "gemini" ? streamGemini(model, req) : streamOpenAI(model, req);
 }
 

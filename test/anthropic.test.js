@@ -38,3 +38,28 @@ test("Anthropic 请求映射跨协议工具 ID，保留原生 ID 且不修改历
 		globalThis.fetch = oldFetch;
 	}
 });
+
+test("上游卡住：空闲超时断开并报错（响应头前、流中途）；用户中止仍是中止", async () => {
+	const http = await import("node:http");
+	const { streamModel } = await import("../src/protocol/index.js");
+	const srv = http.createServer((req, res) => {
+		if (req.url.includes("mid")) {
+			res.writeHead(200, { "content-type": "text/event-stream" });
+			res.write('event: message_start\ndata: {"type":"message_start","message":{"usage":{}}}\n\n');
+		} // 否则连响应头都不发
+	});
+	await new Promise((r) => srv.listen(0, "127.0.0.1", r));
+	const base = `http://127.0.0.1:${srv.address().port}`;
+	const mk = (path) => ({ model: "m", maxOutput: 10, idleTimeout: 0.3, provider: { protocol: "anthropic", baseUrl: base + path, apiKey: "k" } });
+	const run = (m, signal) => (async () => { for await (const _ of streamModel(m, { messages: [], codec: null, signal })) {} })();
+	try {
+		await assert.rejects(run(mk("/head")), /0\.3 秒没有返回任何数据/);
+		await assert.rejects(run(mk("/mid")), /0\.3 秒没有返回任何数据/);
+		const ac = new AbortController();
+		setTimeout(() => ac.abort(), 100);
+		await assert.rejects(run({ ...mk("/mid"), idleTimeout: 5 }, ac.signal), (e) => !/没有返回任何数据/.test(e.message));
+	} finally {
+		srv.closeAllConnections();
+		srv.close();
+	}
+});

@@ -45,7 +45,7 @@ test("同一轮多个 Task 合并成一次多任务调用", async () => {
 test("停止任务后手动压缩不复用已中止的信号", async () => {
 	const original = globalThis.fetch;
 	globalThis.fetch = async (_url, options) => {
-		assert.equal(options.signal, undefined);
+		assert.equal(options.signal?.aborted ?? false, false); // 只有空闲看门狗，不带已中止的任务信号
 		return new Response('data: {"choices":[{"delta":{"content":"压缩摘要"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n', { headers: { "Content-Type": "text/event-stream" } });
 	};
 	try {

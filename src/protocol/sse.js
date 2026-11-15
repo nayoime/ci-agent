@@ -8,6 +8,7 @@ export async function* readSSE(response, signal) {
 			if (signal?.aborted) throw abortError();
 			const { done, value } = await reader.read();
 			if (done) break;
+			signal?.touch?.(); // 空闲看门狗重新计时（protocol/index.js）
 			buf += decoder.decode(value, { stream: true });
 			let m;
 			while ((m = /\r?\n\r?\n/.exec(buf))) {
